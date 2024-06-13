@@ -6,21 +6,21 @@ from move_base_msgs.msg import MoveBaseActionResult
 import socket
 import threading
 
-destination_queue = []
+destination_queue = [1,3]
 
 # x, y, oz, ow
-goal_dict = {
-    2: [0.15891988575458527, 0.0010085701942443848, 0.6998400914998777, 0.714299549439479], 
-    1: [-0.09311291575431824, 0.008935928344726562, 0.7113993827986584, 0.7027879610193162], 
-    3: [-0.7695512771606445, -1.2955982685089111, -0.7122843602996504, 0.7018910101094884],
-    4: [-0.14700953662395477, -1.3220847845077515, -0.6996046105798955, 0.7145301875045957]
-}
 
+goal_dict = {
+    1: [-0.358185350894928,  0.11131536960601807, -0.715335548607076, 0.6987811194494407], 
+    2: [-0.358185350894928,  0.11131536960601807, -0.715335548607076, 0.6987811194494407], 
+    3: [-1.5979013442993164, 1.5172653198242188,  - 0.9999941849474459, 0.00341028903372672],
+    4: [-1.5189454555511475, 1.2149187326431274,  -0.9999987363773453, 0.0015897307044523007]
+}
 initial_pose_dict = {
-    2: [0.15891988575458527, 0.0010085701942443848, 0.6998400914998777, 0.714299549439479], 
-    1: [-0.09311291575431824, 0.008935928344726562, 0.7113993827986584, 0.7027879610193162], 
-    3: [-0.7695512771606445, -1.2955982685089111, -0.7122843602996504, 0.7018910101094884],
-    4: [-0.14700953662395477, -1.3220847845077515, -0.6996046105798955, 0.7145301875045957]
+    1: [-0.0630316436290741, 0.40619581937789917, 0.00836721823101029, 0.9999649942168349], 
+    2: [-0.049162253737449646, 0.7080976963043213, -0.013825346763484552, 0.9999044253261755], 
+    3: [-1.550438404083252, 0.9865538477897644, -0.7095144480495683, 0.7046908882686908],
+    4: [-2.243189811706543, 1.2377580404281616, -0.7228235120537086, 0.6910326840478257]
 }
 
 def create_goal(n):
@@ -51,25 +51,20 @@ def create_initial_pose(n):
     initial_pose_msg.pose.pose.orientation.y = 0.0
     initial_pose_msg.pose.pose.orientation.z = initial_pose[2]
     initial_pose_msg.pose.pose.orientation.w = initial_pose[3]
-    initial_pose_msg.pose.covariance = [0.1, 0, 0, 0, 0, 0,
-                                        0, 0.1, 0, 0, 0, 0,
-                                        0, 0, 0.1, 0, 0, 0,
-                                        0, 0, 0, 0.1, 0, 0,
-                                        0, 0, 0, 0, 0.1, 0,
-                                        0, 0, 0, 0, 0, 0.1]
+    initial_pose_msg.pose.covariance = [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                                        0.0, 0.25, 0.0, 0.0, 0.0, 0.0, 
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 
+                                        0.0, 0.0, 0.0, 0.0, 0.0, 0.06853892326654787]
     return initial_pose_msg
 
-# def goal_result_callback(msg):
-#     global goal_reached
-#     if msg.status.status == 3:  # Goal reached successfully
-#         goal_reached = True
-#         rospy.loginfo("Goal reached successfully")
+
 
 def main():
     rospy.init_node('simple_navigation_goals', anonymous=True)
     goal_pub = rospy.Publisher('/move_base_simple/goal', PoseStamped, queue_size=1)
     initial_pose_pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=1)
-    # rospy.Subscriber('/move_base/result', MoveBaseActionResult, goal_result_callback)
     rospy.loginfo("Publisher initialized")
     rospy.set_param('initial_pose_reached', False)
     rospy.sleep(1)
@@ -98,7 +93,7 @@ def main():
         rospy.sleep(1)
 
 
-def start_server(host='172.30.1.29', port=8080):
+def start_server(host='172.30.1.78', port=8080):
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_address = (host, port)
     print(f'Starting server on {server_address[0]}:{server_address[1]}')
@@ -122,6 +117,8 @@ def start_server(host='172.30.1.29', port=8080):
                     if dst == 2:
                         destination_queue.append(2)
                         destination_queue.append(4)
+                    else:
+                        destination_queue.append(dst)
                     print("destination queue:", destination_queue)
                 else:
                     break

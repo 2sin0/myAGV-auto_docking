@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+
 import rospy
 from sensor_msgs.msg import CompressedImage
 from geometry_msgs.msg import Twist
@@ -11,10 +12,8 @@ import threading
 import dubins
 from move_base_msgs.msg import MoveBaseActionResult
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
-import tf.transformations
-initial_pose_pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=1)
-goal_reached=False
 
+initial_pose_pub = rospy.Publisher('/initialpose', PoseWithCovarianceStamped, queue_size=1)
 marker_size = 0.03
 twist = Twist()
 prev_twist = Twist()
@@ -26,108 +25,110 @@ R_flip[1, 1] = -1.0
 R_flip[2, 2] = -1.0
 goal_is_close = False
 goal_arrived = False
+goal_reached=False
 flag=False
 dubins_path_made = False    #Dubins
 
-k = np.load("/home/sy/catkin_ws/src/myagv_ros/src/myagv_odometry/src/calibration_matrix.npy", allow_pickle=True)
-d = np.load("/home/sy/catkin_ws/src/myagv_ros/src/myagv_odometry/src/distortion_coefficients.npy", allow_pickle=True)
+k = np.load("/calibration_matrix.npy", allow_pickle=True)
+d = np.load("/distortion_coefficients.npy", allow_pickle=True)
 aruco_dict = cv2.aruco.Dictionary_get(cv2.aruco.DICT_6X6_250)
 parameters = cv2.aruco.DetectorParameters_create()
 find_marker_lock = threading.Lock()
 
 
 def goal_result_callback(msg):
-    global goal_reached
-    global flag
+    global goal_reached, target_marker_id
+
     if msg.status.status == 3:  # Goal reached successfully
+        target_marker_id=rospy.get_param('target_marker_id',0)
         goal_reached = True
         flag=False
         rospy.loginfo("Goal reached successfully")
-        sub_cam()
 
 # Kalman Filter
-# kf = cv2.KalmanFilter(6, 3)
-# kf.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0],
-#                                  [0, 1, 0, 0, 0, 0],
-#                                  [0, 0, 1, 0, 0, 0]], np.float32)
-# kf.transitionMatrix = np.array([[1, 0, 0, 1, 0, 0],
-#                                 [0, 1, 0, 0, 1, 0],
-#                                 [0, 0, 1, 0, 0, 1],
-#                                 [0, 0, 0, 1, 0, 0],
-#                                 [0, 0, 0, 0, 1, 0],
-#                                 [0, 0, 0, 0, 0, 1]], np.float32)
+kf = cv2.KalmanFilter(6, 3)
+kf.measurementMatrix = np.array([[1, 0, 0, 0, 0, 0],
+                                 [0, 1, 0, 0, 0, 0],
+                                 [0, 0, 1, 0, 0, 0]], np.float32)
+kf.transitionMatrix = np.array([[1, 0, 0, 1, 0, 0],
+                                [0, 1, 0, 0, 1, 0],
+                                [0, 0, 1, 0, 0, 1],
+                                [0, 0, 0, 1, 0, 0],
+                                [0, 0, 0, 0, 1, 0],
+                                [0, 0, 0, 0, 0, 1]], np.float32)
 
-# kf.processNoiseCov = np.eye(6, dtype=np.float32) * 0.01
-# kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 1
-# kf.errorCovPost = np.eye(6, dtype=np.float32)
-# kf.statePost = np.zeros((6, 1), np.float32)
+kf.processNoiseCov = np.eye(6, dtype=np.float32) * 0.01
+kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 1
+kf.errorCovPost = np.eye(6, dtype=np.float32)
+kf.statePost = np.zeros((6, 1), np.float32)
 
 def callback(compressed_img_msg):
-    global k, d, goal_is_close, goal_arrived,flag, pose_data, dubins_path_made
+    global k, d, goal_is_close, goal_arrived,flag, pose_data, dubins_path_made,goal_reached
     decompressed_img = lz4.frame.decompress(compressed_img_msg.data)
     np_arr = np.frombuffer(decompressed_img, dtype=np.uint8)
     frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
     frame_with_markers = pose_estimation(frame)
 
-    # if pose_data[0] is not None:
-    #     z = np.array(pose_data, dtype=np.float32).reshape(3, 1)
-    #     kf.correct(z)
-    # kf.predict()
-
-    # filtered_pose_data = kf.statePost[:3].flatten()
+    if pose_data[0] is not None:
+        z = np.array(pose_data, dtype=np.float32).reshape(3, 1)
+        kf.correct(z)
+    kf.predict()
+    filtered_pose_data = kf.statePost[:3].flatten()
+    
     cv2.imshow("Received Image", frame_with_markers)
     cv2.waitKey(1)
-    if flag:
-        goal_reached=False
-        # while True:
-        #     if goal_reached==True:
-        #         break
-        #     time.sleep(1)
-        #initialize
-        goal_is_close=False
-        goal_arrived=False
-        # flag=False
-
-    elif pose_data[0] is not None:
-        # adjust_pose(filtered_pose_data)
-        adjust_pose(pose_data)
-
-        # Dubins
-        # if not dubins_path_made:
-        #     dubins_path_made=True
-        #     makePath_and_go()   #make Dubins path, and move
-        # else:
-        #     # adjust_pose(filtered_pose_data)
-        #     adjust_pose(pose_data)
+    if not goal_reached:
+        pass
+        # rospy.loginfo("not goal reached")
     else:
-        if goal_arrived:
-            go(0.0, 0.0, 0.0)
-            #time.sleep(12)
-            #flag=True
-            box_on = input("\nWhen Box is on Conveyor, press 'enter' : ").lower()
-            if box_on == '' :
+        if flag:
+            #initialize
+            goal_reached=False
+            goal_is_close=False
+            goal_arrived=False
+
+        elif pose_data[0] is not None:
+            adjust_pose(filtered_pose_data)
+            # adjust_pose(pose_data)
+
+            # Dubins
+            if not dubins_path_made:
+                dubins_path_made=True
+                makePath_and_go()   #make Dubins path, and move
+            else:
+                adjust_pose(filtered_pose_data)
+                # adjust_pose(pose_data)
+        else:
+            if goal_arrived:
+                go(0.0, 0.0, 0.0)
+                rospy.loginfo("Waiting for Box")
+                time.sleep(10)
                 go(-0.1, 0.0, 0.0)
                 time.sleep(4)
                 go(0.0, 0.0, 0.0)
                 rospy.set_param('/initial_pose_reached', True)
-                rospy.loginfo("initial pose reached")
                 flag=True
+                # box_on = input("\nWhen Box is on Conveyor, press 'enter' : ").lower()
+                # if box_on == '' :
+                #     go(-0.1, 0.0, 0.0)
+                #     time.sleep(4)
+                #     go(0.0, 0.0, 0.0)
+                #     rospy.set_param('/initial_pose_reached', True)
+                #     rospy.loginfo("initial pose reached")
+                #     flag=True
 
+            elif goal_is_close:
+                go(0.01, 0.0, 0.0)
+                time.sleep(0.8)
+                go(0.0, 0.0, 0.0)
+                goal_arrived = True
+            else:
+                if find_marker_lock.acquire(blocking=False):
+                    try:
+                        threading.Thread(target=find_marker).start()
+                    finally:
+                        find_marker_lock.release()
 
-        elif goal_is_close:
-            go(0.01, 0.0, 0.0)
-            time.sleep(0.8)
-            go(0.0, 0.0, 0.0)
-            goal_arrived = True
-        else:
-            if find_marker_lock.acquire(blocking=False):
-                try:
-                    threading.Thread(target=find_marker).start()
-                finally:
-                    find_marker_lock.release()
-
-    # cv2.imshow("Received Image", frame_with_markers)
-    # cv2.waitKey(1)
 
 def makePath_and_go():
     go(0.0, 0.0, 0.0)
@@ -180,24 +181,21 @@ def makePath_and_go():
                 print("R", rot_angle)                
                 time.sleep(rot_angle)
                 rot_angle=last_rot_angle
-                go(0.0, 0.0, 0.0)
-                time.sleep(0.5)
 
             elif direction=='S':
                 go(0.1, 0.0, 0.0)
                 speed=2.2
                 print("S", distance/speed)                
                 time.sleep(distance/speed)
-                go(0.0, 0.0, 0.0)
-                time.sleep(0.5)
 
             elif direction=='L':
                 go(0.02, 0.0, 0.1)
                 print("L", rot_angle)                
                 time.sleep(rot_angle)
                 rot_angle=last_rot_angle
-                go(0.0, 0.0, 0.0)
-                time.sleep(0.5)
+            go(0.0, 0.0, 0.0)
+            time.sleep(0.5)
+        
         go(0.0, 0.0, 0.0)
         print("go 0 0 0")
 
@@ -257,16 +255,14 @@ def adjust_pose(pose):
 def find_marker():
     global find_marker_lock
     with find_marker_lock:
-        go(0.0, 0.0, -0.1)
+        go(0.0, 0.0, 0.1)
         time.sleep(0.5)
         go(0.0, 0.0, 0.0)
         time.sleep(0.1)
 
 def pose_estimation(frame):
-    global pose_data, aruco_dict, parameters
-    # gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    global pose_data, aruco_dict, parameters, target_marker_id
 
-    # corners, ids, rejected_img_points = cv2.aruco.detectMarkers(gray, aruco_dict, parameters=parameters)
     corners, ids, rejected_img_points = cv2.aruco.detectMarkers(frame, aruco_dict, parameters=parameters)
 
     if len(corners) > 0:
@@ -330,25 +326,12 @@ def go(x, y, theta):
         
         prev_twist = twist
 
-
-def sub_cam():
-    #if goal_reached-> get_param destination & main()
-    global target_marker_id
-    target_marker_id=rospy.get_param('target_marker_id')
-    print("target marker id :", target_marker_id)
-    print('waiting for image')
-    global image_subscriber
-    try:
-        image_subscriber = rospy.Subscriber('/camera/compressed_image', CompressedImage, callback)
-        
-        # rospy.spin()
-    except rospy.ROSInterruptException:
-        pass
-
-
 if __name__ == '__main__':
     rospy.init_node('image_subscriber', anonymous=True)
     rospy.Subscriber('/move_base/result', MoveBaseActionResult, goal_result_callback)
+    global target_marker_id
+    target_marker_id=rospy.get_param('target_marker_id',0)
+    rospy.Subscriber('/camera/compressed_image', CompressedImage, callback)
+    
     while not rospy.is_shutdown():
-        print('waiting for goal_reached')
         rospy.spin()
